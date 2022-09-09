@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+	<!--Módulo #43: WebRTC - Criando sistema de chat e vídeo-->
+	
+	<title>Projeto Vídeo Chat</title>	
+	<meta charset="utf-8" />	
+	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css" integrity="sha512-KfkfwYDsLkIlwQp6LFnl8zNdLGxu9YAA1QvwINks4PhcElQSvqcyVLLD9aMhXd13uQjoXtEKNosOWaZqXgel0g==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+	<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@300;400;700&display=swap" rel="stylesheet">
+		
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">	
+	<script type='text/javascript' src='https://cdn.scaledrone.com/scaledrone.min.js'></script>
+	
+	<!--Tags para SEO-->
+	<meta name="description" content="chat em tempo real" />
+	<meta name="keywords" content="webrtc, scaledrone, chat,javascript, js" />
+	<meta name="author" content="DevProCanidia" />	
+</head>
+<body>
+
+	<style type="text/css">
+		.welcome{
+			text-align: center;
+			padding: 10px 0;
+		}
+
+		body{
+			display: flex;
+			height: 100vh;
+			margin: 0;
+			align-items: center;
+			justify-content: center;
+			padding: 0 50px;
+		}
+
+
+		video{
+			max-width: calc(50% - 100px);
+			margin: 0 50px;
+			box-sizing: border-box;
+			border-radius: 2px;
+			padding: 0;
+			border:1px solid #ccc;
+		}
+
+		.title{
+			position: fixed;
+			top: 10px;
+			left: 50%;
+			transform:translate(-50%,0);
+			font-size: 30px;
+		}
+
+	</style>
+
+	<div class="title">Bem-vindo ao chat em tempo real do DevProCanidia!</div>
+	
+
+	<video id="localVideo" autoplay muted></video>
+	<video id="remoteVideo" autoplay></video>
+
+	<script>
+		//Início ScaleDrone e WebRTC
+		if(!location.hash){
+			location.hash = Math.floor(Math.random() * 0xFFFFFF).toString(16);
+		}
+
+		const roomHash = location.hash.substring(1);
+
+		const drone = new ScaleDrone('yiS12Ts5RdNhebyM');
+		//criando o servidor
+
+		const roomName = 'observable-'+roomHash;
+
+		const configuration = {
+
+			iceServers:[
+
+				{
+					urls: 'stun:stun.l.google.com:19302'
+					//servidor que vai transmitir a troca de informações entre client/server
+				}
+
+			]
+
+		}
+
+		let room;
+		let pc;
+
+		let number = 0;
+
+
+		function onSuccess(){};
+
+		function onError(error){
+			console.log(error);
+		};
+
+
+		drone.on('open', error => {
+			if(error)
+				return console.log(error);
+
+			room = drone.subscribe(roomName);
+
+
+			room.on('open',error=>{
+				//Se acontecer erro, capturamos aqui!
+
+			});
+
+			room.on('members', members=>{
+
+				//console.log("Conectado!");
+				//mostrar no console que o usuário foi conectado
+
+				//console.log("Conexões abertas: "+ members.length);
+				// capturar a quantidades de usuários conectados
+
+				number = members.length - 1;
+				//validação em caso de conexão 
+				const isOfferer = members.length >= 2;
+				// limitando a qtd de conexões, nesse caso limite até 2 usuários
+
+				startWebRTC(isOfferer);
+				// chamando a função startWebRTC
+
+			});
+
+		});
+
+		//Enviando mensagens
+		function sendMessage(message){
+			drone.publish({
+				room: roomName,
+				message
+			})
+		}
+
+
+		function startWebRTC(isOfferer){
+
+
+			pc = new RTCPeerConnection(configuration);
+			//criando o objeto pc e troca de informações
+
+			pc.onicecandidate = event =>{
+			//detectando os eventos	
+				if(event.candidate){
+					sendMessage({'candidate':event.candidate});
+				}
+			};
+
+
+			if(isOfferer){
+				pc.onnegotiationneeded = () =>{
+					pc.createOffer().then(localDescCreated).catch(onError);
+				}
+			}
+
+
+
+			pc.ontrack = event =>{
+				const stream = event.streams[0];
+
+
+				if(!remoteVideo.srcObject || remoteVideo.srcObject.id !== stream.id){
+					//verificar se existe ou se o bjeto for diferente do meu id
+					remoteVideo.srcObject = stream;
+					//diferente do meu id ele captura esse id(novo)
+				}
+			}
+
+
+			navigator.mediaDevices.getUserMedia({
+			// pegar os objetos (câmera e microfone)
+				audio: true,
+				//pegar o video
+				video: true,
+				//pegar o microfone
+			}).then(stream => {
+				localVideo.srcObject =  stream;
+				// mostrar o MEU video e microfone
+				stream.getTracks().forEach(track=>pc.addTrack(track,stream))
+			}, onError)
+				//pegar o video do seu(externo) com a camera e o microfone
+
+			room.on('member_leave',function(member){
+				//Rastrear o Usuário que saiu!
+				remoteVideo.style.display = "none";
+				// Caso o outro(externo) video saia da sala não apareça nada
+			})
+
+			room.on('data',(message, client)=>{
+				//validações
+				if(client.id === drone.clientId){
+				// para não enviar a mensagem pra mim mesmo
+					return;
+				}
+
+				if(message.sdp){
+					pc.setRemoteDescription(new RTCSessionDescription(message.sdp), () => {
+						if(pc.remoteDescription.type === 'offer'){
+							pc.createAnswer().then(localDescCreated).catch(onErrror);
+							//criar uma resposta
+						}
+					}, onError)
+				}else if(message.candidate){
+					pc.addIceCandidate(
+						new RTCIceCandidate(message.candidate), onSuccess, onError
+					)
+				}
+
+			})
+
+		}
+
+		function localDescCreated(desc){
+			pc.setLocalDescription(
+				desc, () => sendMessage({'sdp': pc.localDescription}), onError
+			);
+		}
+
+
+	</script>
+
+</body>
+</html>
